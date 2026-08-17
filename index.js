@@ -1,8 +1,23 @@
+
 const {
   Client,
   GatewayIntentBits,
   Events
 } = require("discord.js");
+
+const http = require("http");
+
+const PORT = process.env.PORT || 10000;
+
+// Pequeno servidor HTTP para o Render
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("KalRank está online!");
+});
+
+server.listen(PORT, () => {
+  console.log(`Servidor HTTP rodando na porta ${PORT}`);
+});
 
 const client = new Client({
   intents: [
@@ -13,24 +28,18 @@ const client = new Client({
   ]
 });
 
-// Armazena os jogadores em memória
 const players = new Map();
 
-// Configurações
 const XP_PER_MINUTE = 1;
-const XP_PER_MESSAGE = 2;
 
-// Calcula o nível baseado no XP
 function getLevel(xp) {
   return Math.floor(Math.sqrt(xp / 100));
 }
 
-// Calcula o XP necessário para o próximo nível
 function getNextLevelXP(level) {
   return Math.pow(level + 1, 2) * 100;
 }
 
-// Cria o jogador caso ele ainda não exista
 function getPlayer(userId) {
   if (!players.has(userId)) {
     players.set(userId, {
@@ -43,7 +52,6 @@ function getPlayer(userId) {
   return players.get(userId);
 }
 
-// Quando o bot ligar
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`KalRank conectado como ${readyClient.user.tag}`);
 
@@ -73,19 +81,18 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 });
 
-// Detecta entrada/saída/mudança de canal de voz
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   const userId = newState.id;
   const player = getPlayer(userId);
 
-  // Entrou em uma call
   if (!oldState.channelId && newState.channelId) {
     player.voiceJoinTime = Date.now();
 
-    console.log(`${newState.member?.user.tag || userId} entrou na call.`);
+    console.log(
+      `${newState.member?.user.tag || userId} entrou na call.`
+    );
   }
 
-  // Saiu da call
   if (oldState.channelId && !newState.channelId) {
     if (player.voiceJoinTime) {
       const minutes = Math.floor(
@@ -97,13 +104,12 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
       player.voiceJoinTime = null;
 
       console.log(
-        `${newState.member?.user.tag || userId} ficou ${minutes} minutos em call.`
+        `${newState.member?.user.tag || userId} ganhou ${minutes} XP.`
       );
     }
   }
 });
 
-// Comandos
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -142,7 +148,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .slice(0, 10);
 
     if (ranking.length === 0) {
-      return interaction.reply("📊 Ainda não existem jogadores no ranking.");
+      return interaction.reply(
+        "📊 Ainda não existem jogadores no ranking."
+      );
     }
 
     let text = "🏆 **RANKING KALRANK**\n\n";
@@ -150,7 +158,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     for (let i = 0; i < ranking.length; i++) {
       const [userId, data] = ranking[i];
 
-      const user = await client.users.fetch(userId).catch(() => null);
+      const user = await client.users
+        .fetch(userId)
+        .catch(() => null);
 
       text += `${i + 1}. **${user?.username || userId}** — ${data.xp} XP\n`;
     }
@@ -159,7 +169,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// Token
 const token = process.env.DISCORD_TOKEN;
 
 if (!token) {
