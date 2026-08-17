@@ -171,9 +171,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 const token = process.env.DISCORD_TOKEN;
 
+console.log("DISCORD_TOKEN existe?", !!token);
+console.log("Tamanho do token:", token ? token.length : 0);
+
 if (!token) {
-  console.error("ERRO: DISCORD_TOKEN não foi configurado.");
-  process.exit(1);
-}
 
 client.login(token);
