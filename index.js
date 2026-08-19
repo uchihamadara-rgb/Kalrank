@@ -136,9 +136,28 @@ client.once(Events.ClientReady, async (readyClient) => {
       log("info", "✅ Comandos slash registrados globalmente");
     } catch (error) {
       log("error", "❌ Erro ao registrar comandos:", error);
+   // Registrar comandos slash nos servidores
+  try {
+    const rest = new REST({ version: "10" }).setToken(CONFIG.token);
+
+    for (const [guildId] of readyClient.guilds.cache) {
+      await rest.put(
+        Routes.applicationGuildCommands(readyClient.user.id, guildId),
+        {
+          body: COMMANDS,
+        },
+      );
+
+      log("info", `✅ Comandos registrados no servidor ${guildId}`);
     }
+
+    log(
+      "info",
+      `✅ Comandos slash registrados em ${readyClient.guilds.cache.size} servidor(es)`,
+    );
+  } catch (error) {
+    log("error", "❌ Erro ao registrar comandos:", error);
   }
-});
 
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   const userId = newState.id;
