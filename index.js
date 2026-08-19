@@ -1,5 +1,22 @@
 /**
  * KalRank - Discord Bot para Ranking por Tempo em Call
+ *
+ * Comandos:
+ * /rank
+ * /ranking
+ * /perfil
+ * /tempo
+ *
+ * Recursos:
+ * - XP por minuto em call
+ * - Sistema de níveis
+ * - Barra de progresso
+ * - Ranking TOP 10
+ * - Registro automático dos comandos
+ * - Health check para Render
+ * - DeferReply para evitar erro 10062 (Unknown interaction)
+ * - Atualização automática do tempo em call
+ * - Ignora bots
  */
 
 import "dotenv/config";
@@ -14,31 +31,58 @@ import {
 
 import { createServer } from "http";
 
-// ============ CONFIGURAÇÕES ============
+// ============================================================
+// CONFIGURAÇÕES
+// ============================================================
 
 const CONFIG = {
   port: parseInt(process.env.PORT || "10000", 10),
+
   token: process.env.DISCORD_TOKEN,
+
   clientId: process.env.DISCORD_CLIENT_ID,
-  xpPerMinute: parseInt(process.env.XP_PER_MINUTE || "1", 10),
-  xpBase: parseInt(process.env.XP_BASE || "100", 10),
+
+  xpPerMinute: parseInt(
+    process.env.XP_PER_MINUTE || "1",
+    10
+  ),
+
+  xpBase: parseInt(
+    process.env.XP_BASE || "100",
+    10
+  ),
+
   logLevel: process.env.LOG_LEVEL || "info",
+
+  // Intervalo para atualizar jogadores em call
+  voiceUpdateInterval: 60 * 1000,
 };
 
-// ============ VALIDAÇÕES ============
+// ============================================================
+// VALIDAÇÕES
+// ============================================================
 
 if (!CONFIG.token) {
-  console.error("❌ ERRO: DISCORD_TOKEN não definido.");
+  console.error(
+    "❌ ERRO: DISCORD_TOKEN não definido."
+  );
+
   process.exit(1);
 }
 
 if (!CONFIG.clientId) {
   console.warn(
-    "⚠️ AVISO: DISCORD_CLIENT_ID não definido. Comandos slash não serão registrados."
+    "⚠️ AVISO: DISCORD_CLIENT_ID não definido."
+  );
+
+  console.warn(
+    "⚠️ Os comandos slash não serão registrados."
   );
 }
 
-// ============ LOGGER ============
+// ============================================================
+// LOGGER
+// ============================================================
 
 const logLevels = {
   debug: 0,
@@ -47,11 +91,16 @@ const logLevels = {
   error: 3,
 };
 
-const currentLogLevel = logLevels[CONFIG.logLevel] ?? 1;
+const currentLogLevel =
+  logLevels[CONFIG.logLevel] ?? 1;
 
 function log(level, ...args) {
-  if (logLevels[level] >= currentLogLevel) {
-    const prefix = level.toUpperCase().padEnd(5);
+  if (
+    logLevels[level] >=
+    currentLogLevel
+  ) {
+    const prefix =
+      level.toUpperCase().padEnd(5);
 
     console.log(
       `[${new Date().toISOString()}] ${prefix}`,
@@ -60,11 +109,15 @@ function log(level, ...args) {
   }
 }
 
-// ============ XP E NÍVEL ============
+// ============================================================
+// XP E NÍVEL
+// ============================================================
 
 function getLevel(xp) {
   return Math.floor(
-    Math.sqrt(xp / CONFIG.xpBase)
+    Math.sqrt(
+      xp / CONFIG.xpBase
+    )
   );
 }
 
@@ -82,7 +135,9 @@ function getXPForLevel(level) {
   );
 }
 
-// ============ JOGADORES ============
+// ============================================================
+// JOGADORES
+// ============================================================
 
 const players = new Map();
 
@@ -90,8 +145,11 @@ function getPlayer(userId) {
   if (!players.has(userId)) {
     players.set(userId, {
       xp: 0,
+
       voiceJoinTime: null,
+
       totalVoiceMinutes: 0,
+
       lastUpdate: Date.now(),
     });
   }
@@ -99,49 +157,129 @@ function getPlayer(userId) {
   return players.get(userId);
 }
 
-function updatePlayerVoiceTime(userId, minutes) {
-  const player = getPlayer(userId);
+// ============================================================
+// ADICIONAR TEMPO / XP
+// ============================================================
 
-  player.totalVoiceMinutes += minutes;
-  player.xp += minutes * CONFIG.xpPerMinute;
-  player.lastUpdate = Date.now();
+function updatePlayerVoiceTime(
+  userId,
+  minutes
+) {
+  if (!minutes || minutes <= 0) {
+    return;
+  }
 
-  return player;
+  const player =
+    getPlayer(userId);
+
+  player.totalVoiceMinutes +=
+    minutes;
+
+  player.xp +=
+    minutes *
+    CONFIG.xpPerMinute;
+
+  player.lastUpdate =
+    Date.now();
 }
 
-// ============ COMANDOS SLASH ============
+// ============================================================
+// ATUALIZAR JOGADORES QUE ESTÃO EM CALL
+// ============================================================
+
+function updateActiveVoicePlayers() {
+  const now = Date.now();
+
+  for (const [
+    userId,
+    player,
+  ] of players.entries()) {
+    if (!player.voiceJoinTime) {
+      continue;
+    }
+
+    const elapsedMinutes =
+      Math.floor(
+        (now -
+          player.voiceJoinTime) /
+          60000
+      );
+
+    if (elapsedMinutes <= 0) {
+      continue;
+    }
+
+    updatePlayerVoiceTime(
+      userId,
+      elapsedMinutes
+    );
+
+    // Continua contando a partir
+    // do último minuto processado
+    player.voiceJoinTime =
+      player.voiceJoinTime +
+      elapsedMinutes * 60000;
+
+    log(
+      "debug",
+      `⭐ ${userId} ganhou ${elapsedMinutes} XP por estar em call`
+    );
+  }
+}
+
+// ============================================================
+// COMANDOS SLASH
+// ============================================================
 
 const COMMANDS = [
   {
     name: "rank",
-    description: "Mostra seu nível e XP atual",
+
+    description:
+      "Mostra seu nível e XP atual",
   },
+
   {
     name: "ranking",
-    description: "Mostra o top 10 do servidor",
+
+    description:
+      "Mostra o TOP 10 do servidor",
   },
+
   {
     name: "perfil",
-    description: "Mostra seu perfil completo no KalRank",
+
+    description:
+      "Mostra seu perfil completo no KalRank",
   },
+
   {
     name: "tempo",
-    description: "Mostra seu tempo total em call",
+
+    description:
+      "Mostra seu tempo total em call",
   },
 ];
 
-// ============ CLIENT DISCORD ============
+// ============================================================
+// CLIENT DISCORD
+// ============================================================
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+
     GatewayIntentBits.GuildMembers,
+
     GatewayIntentBits.GuildPresences,
+
     GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
-// ============ BOT ONLINE ============
+// ============================================================
+// BOT ONLINE
+// ============================================================
 
 client.once(
   Events.ClientReady,
@@ -156,14 +294,26 @@ client.once(
       `📊 Servidores: ${readyClient.guilds.cache.size}`
     );
 
-    // Registrar comandos nos servidores
-    if (CONFIG.clientId) {
-      try {
-        const rest = new REST({
-          version: "10",
-        }).setToken(CONFIG.token);
+    // ========================================================
+    // REGISTRAR COMANDOS
+    // ========================================================
 
-        for (const [guildId] of readyClient.guilds.cache) {
+    if (!CONFIG.clientId) {
+      return;
+    }
+
+    try {
+      const rest =
+        new REST({
+          version: "10",
+        }).setToken(
+          CONFIG.token
+        );
+
+      for (const [
+        guildId,
+      ] of readyClient.guilds.cache) {
+        try {
           await rest.put(
             Routes.applicationGuildCommands(
               CONFIG.clientId,
@@ -178,62 +328,96 @@ client.once(
             "info",
             `✅ Comandos registrados no servidor ${guildId}`
           );
+        } catch (error) {
+          log(
+            "error",
+            `❌ Erro ao registrar comandos no servidor ${guildId}:`,
+            error
+          );
         }
-
-        log(
-          "info",
-          `✅ Comandos slash registrados em ${readyClient.guilds.cache.size} servidor(es)`
-        );
-      } catch (error) {
-        log(
-          "error",
-          "❌ Erro ao registrar comandos:",
-          error
-        );
       }
+
+      log(
+        "info",
+        `✅ Registro dos comandos finalizado`
+      );
+    } catch (error) {
+      log(
+        "error",
+        "❌ Erro geral ao registrar comandos:",
+        error
+      );
     }
   }
 );
 
-// ============ VOICE STATE ============
+// ============================================================
+// ENTRADA / SAÍDA / MUDANÇA DE CALL
+// ============================================================
 
 client.on(
   Events.VoiceStateUpdate,
-  (oldState, newState) => {
-    const userId = newState.id;
+  (
+    oldState,
+    newState
+  ) => {
+    const userId =
+      newState.id;
 
     // Ignorar bots
-    if (newState.member?.user.bot) {
+    if (
+      newState.member?.user?.bot
+    ) {
       return;
     }
 
-    const player = getPlayer(userId);
+    const player =
+      getPlayer(userId);
+
     const now = Date.now();
 
-    // Entrou em call
+    // ========================================================
+    // ENTROU EM CALL
+    // ========================================================
+
     if (
       !oldState.channelId &&
       newState.channelId
     ) {
-      player.voiceJoinTime = now;
+      player.voiceJoinTime =
+        now;
+
+      player.lastUpdate =
+        now;
 
       log(
-        "debug",
-        `🎙️ ${newState.member?.user.tag || userId} entrou na call`
+        "info",
+        `🎙️ ${
+          newState.member?.user
+            ?.tag || userId
+        } entrou na call`
       );
 
       return;
     }
 
-    // Saiu da call
+    // ========================================================
+    // SAIU DA CALL
+    // ========================================================
+
     if (
       oldState.channelId &&
       !newState.channelId
     ) {
-      if (player.voiceJoinTime) {
-        const minutes = Math.floor(
-          (now - player.voiceJoinTime) / 60000
-        );
+      if (
+        player.voiceJoinTime
+      ) {
+        const minutes =
+          Math.floor(
+            (now -
+              player.voiceJoinTime) /
+              60000
+          );
 
         if (minutes > 0) {
           updatePlayerVoiceTime(
@@ -243,47 +427,74 @@ client.on(
 
           log(
             "info",
-            `⭐ ${newState.member?.user.tag || userId} ganhou ${minutes} XP (${minutes} min)`
+            `⭐ ${
+              newState.member?.user
+                ?.tag || userId
+            } ganhou ${minutes} XP (${minutes} min)`
           );
         }
 
-        player.voiceJoinTime = null;
+        player.voiceJoinTime =
+          null;
       }
 
       return;
     }
 
-    // Mudou de canal
+    // ========================================================
+    // MUDOU DE CANAL
+    // ========================================================
+
     if (
       oldState.channelId &&
       newState.channelId &&
       oldState.channelId !==
         newState.channelId
     ) {
-      if (player.voiceJoinTime) {
-        const minutes = Math.floor(
-          (now - player.voiceJoinTime) / 60000
-        );
+      // O tempo continua contando.
+      // Não reiniciamos o relógio.
 
-        if (minutes > 0) {
-          updatePlayerVoiceTime(
-            userId,
-            minutes
-          );
-        }
-      }
+      log(
+        "debug",
+        `🔄 ${userId} mudou de canal`
+      );
 
-      player.voiceJoinTime = now;
+      return;
     }
   }
 );
 
-// ============ INTERAÇÕES ============
+// ============================================================
+// ATUALIZAÇÃO AUTOMÁTICA DE VOZ
+// ============================================================
+
+setInterval(
+  () => {
+    try {
+      updateActiveVoicePlayers();
+    } catch (error) {
+      log(
+        "error",
+        "❌ Erro ao atualizar jogadores em call:",
+        error
+      );
+    }
+  },
+  CONFIG.voiceUpdateInterval
+);
+
+// ============================================================
+// INTERAÇÕES
+// ============================================================
 
 client.on(
   Events.InteractionCreate,
   async (interaction) => {
-    if (!interaction.isChatInputCommand()) {
+    // Ignorar qualquer coisa que não seja
+    // comando slash
+    if (
+      !interaction.isChatInputCommand()
+    ) {
       return;
     }
 
@@ -293,263 +504,376 @@ client.on(
       guildId,
     } = interaction;
 
-    const player = getPlayer(user.id);
-
-    const level = getLevel(player.xp);
-
-    const nextXP =
-      getNextLevelXP(level);
-
-    const currentLevelXP =
-      getXPForLevel(level);
-
-    const progressXP =
-      player.xp - currentLevelXP;
-
-    const neededXP =
-      nextXP - currentLevelXP;
-
     try {
-      switch (commandName) {
-        // =========================
-        // RANK
-        // =========================
+      // ======================================================
+      // IMPORTANTE
+      //
+      // O Discord exige uma resposta rápida.
+      //
+      // deferReply() informa ao Discord:
+      // "Recebi o comando e estou processando."
+      //
+      // Depois usamos editReply().
+      // ======================================================
 
-        case "rank": {
-          const progressBar =
-            createProgressBar(
-              progressXP,
-              neededXP,
-              10
+      await interaction.deferReply();
+
+      const player =
+        getPlayer(user.id);
+
+      // Atualizar o tempo atual do jogador
+      // antes de mostrar os dados
+      if (
+        player.voiceJoinTime
+      ) {
+        const now =
+          Date.now();
+
+        const minutes =
+          Math.floor(
+            (now -
+              player.voiceJoinTime) /
+              60000
+          );
+
+        if (minutes > 0) {
+          updatePlayerVoiceTime(
+            user.id,
+            minutes
+          );
+
+          player.voiceJoinTime =
+            player.voiceJoinTime +
+            minutes * 60000;
+        }
+      }
+
+      const level =
+        getLevel(player.xp);
+
+      const nextXP =
+        getNextLevelXP(level);
+
+      const currentLevelXP =
+        getXPForLevel(level);
+
+      const progressXP =
+        Math.max(
+          0,
+          player.xp -
+            currentLevelXP
+        );
+
+      const neededXP =
+        Math.max(
+          1,
+          nextXP -
+            currentLevelXP
+        );
+
+      // ======================================================
+      // RANK
+      // ======================================================
+
+      if (
+        commandName === "rank"
+      ) {
+        const progressBar =
+          createProgressBar(
+            progressXP,
+            neededXP,
+            10
+          );
+
+        await interaction.editReply(
+          `🏆 **Rank de ${user.username}**\n\n` +
+            `📊 Nível: **${level}**\n` +
+            `${progressBar} **${progressXP}/${neededXP} XP**\n\n` +
+            `⭐ XP Total: **${player.xp}**\n` +
+            `🎙️ Tempo em call: **${formatTime(
+              player.totalVoiceMinutes
+            )}**`
+        );
+
+        return;
+      }
+
+      // ======================================================
+      // PERFIL
+      // ======================================================
+
+      if (
+        commandName === "perfil"
+      ) {
+        const progressBar =
+          createProgressBar(
+            progressXP,
+            neededXP,
+            15
+          );
+
+        await interaction.editReply(
+          `👤 **Perfil de ${user.username}**\n\n` +
+            `🏆 **Nível ${level}**\n` +
+            `${progressBar}\n\n` +
+            `⭐ **XP:** ${player.xp}\n` +
+            `📈 **Progresso:** ${progressXP}/${neededXP} XP\n` +
+            `🎙️ **Tempo total:** ${formatTime(
+              player.totalVoiceMinutes
+            )}\n` +
+            `📅 **Última atualização:** <t:${Math.floor(
+              player.lastUpdate /
+                1000
+            )}:R>`
+        );
+
+        return;
+      }
+
+      // ======================================================
+      // TEMPO
+      // ======================================================
+
+      if (
+        commandName === "tempo"
+      ) {
+        await interaction.editReply(
+          `🎙️ **Tempo em Call de ${user.username}**\n\n` +
+            `⏱️ Total: **${formatTime(
+              player.totalVoiceMinutes
+            )}**\n` +
+            `⭐ XP ganho: **${
+              player.totalVoiceMinutes *
+              CONFIG.xpPerMinute
+            }**`
+        );
+
+        return;
+      }
+
+      // ======================================================
+      // RANKING
+      // ======================================================
+
+      if (
+        commandName === "ranking"
+      ) {
+        let ranking = [
+          ...players.entries(),
+        ];
+
+        // ----------------------------------------------------
+        // FILTRAR MEMBROS DO SERVIDOR
+        // ----------------------------------------------------
+
+        if (guildId) {
+          const guild =
+            client.guilds.cache.get(
+              guildId
             );
 
-          await interaction.reply(
-            `🏆 **Rank de ${user.username}**\n` +
-              `📊 Nível: **${level}** ${progressBar} ${progressXP}/${neededXP} XP\n` +
-              `⭐ XP Total: **${player.xp}**\n` +
-              `🎙️ Tempo em call: **${player.totalVoiceMinutes} min**`
-          );
-
-          break;
-        }
-
-        // =========================
-        // PERFIL
-        // =========================
-
-        case "perfil": {
-          const progressBar =
-            createProgressBar(
-              progressXP,
-              neededXP,
-              15
-            );
-
-          const hours = Math.floor(
-            player.totalVoiceMinutes / 60
-          );
-
-          const mins =
-            player.totalVoiceMinutes % 60;
-
-          await interaction.reply(
-            `👤 **Perfil de ${user.username}**\n\n` +
-              `🏆 **Nível ${level}** ${progressBar}\n` +
-              `⭐ **XP:** ${player.xp} (${progressXP}/${neededXP} para próximo nível)\n` +
-              `🎙️ **Tempo total:** ${hours}h ${mins}min (${player.totalVoiceMinutes} min)\n` +
-              `📅 **Última atualização:** <t:${Math.floor(player.lastUpdate / 1000)}:R>`
-          );
-
-          break;
-        }
-
-        // =========================
-        // TEMPO
-        // =========================
-
-        case "tempo": {
-          const hours = Math.floor(
-            player.totalVoiceMinutes / 60
-          );
-
-          const mins =
-            player.totalVoiceMinutes % 60;
-
-          await interaction.reply(
-            `🎙️ **Tempo em Call de ${user.username}**\n` +
-              `⏱️ Total: **${hours}h ${mins}min** (${player.totalVoiceMinutes} minutos)\n` +
-              `⭐ XP ganho: **${player.totalVoiceMinutes * CONFIG.xpPerMinute}**`
-          );
-
-          break;
-        }
-
-        // =========================
-        // RANKING
-        // =========================
-
-        case "ranking": {
-          let ranking = [
-            ...players.entries(),
-          ];
-
-          // Filtrar membros do servidor
-          if (guildId) {
-            const guild =
-              client.guilds.cache.get(
-                guildId
-              );
-
-            if (guild) {
+          if (guild) {
+            try {
               const members =
                 await guild.members.fetch();
 
               const memberIds =
-                new Set(members.keys());
+                new Set(
+                  members.keys()
+                );
 
-              ranking = ranking.filter(
-                ([id]) =>
-                  memberIds.has(id)
+              ranking =
+                ranking.filter(
+                  ([id]) =>
+                    memberIds.has(id)
+                );
+            } catch (error) {
+              log(
+                "warn",
+                "⚠️ Não foi possível buscar todos os membros:",
+                error
               );
             }
           }
+        }
 
-          ranking.sort(
-            (a, b) =>
-              b[1].xp - a[1].xp
+        // ----------------------------------------------------
+        // ORDENAR POR XP
+        // ----------------------------------------------------
+
+        ranking.sort(
+          (a, b) =>
+            b[1].xp -
+            a[1].xp
+        );
+
+        const top10 =
+          ranking.slice(0, 10);
+
+        // ----------------------------------------------------
+        // RANKING VAZIO
+        // ----------------------------------------------------
+
+        if (
+          top10.length === 0
+        ) {
+          await interaction.editReply(
+            "📊 **Ainda não existem jogadores no ranking.**"
           );
 
-          const top10 =
-            ranking.slice(0, 10);
+          return;
+        }
 
-          if (top10.length === 0) {
-            await interaction.reply(
-              "📊 Ainda não existem jogadores no ranking."
-            );
+        // ----------------------------------------------------
+        // MONTAR RANKING
+        // ----------------------------------------------------
 
-            return;
-          }
+        let text =
+          "🏆 **RANKING KALRANK — TOP 10**\n\n";
 
-          let text =
-            "🏆 **RANKING KALRANK — TOP 10**\n\n";
+        for (
+          let i = 0;
+          i < top10.length;
+          i++
+        ) {
+          const [
+            uid,
+            data,
+          ] = top10[i];
 
-          for (
-            let i = 0;
-            i < top10.length;
-            i++
-          ) {
-            const [uid, data] =
-              top10[i];
+          const lvl =
+            getLevel(data.xp);
 
-            const lvl =
-              getLevel(data.xp);
+          let username =
+            `User ${uid.slice(
+              -4
+            )}`;
 
-            let username = uid;
-
-            const cachedUser =
-              client.users.cache.get(
+          try {
+            const fetchedUser =
+              await client.users.fetch(
                 uid
               );
 
-            if (cachedUser) {
-              username =
-                cachedUser.username;
-            } else {
-              try {
-                const fetched =
-                  await client.users.fetch(
-                    uid
-                  );
-
-                username =
-                  fetched.username;
-              } catch {
-                username =
-                  `User ${uid.slice(-4)}`;
-              }
-            }
-
-            const medal =
-              i === 0
-                ? "🥇"
-                : i === 1
-                ? "🥈"
-                : i === 2
-                ? "🥉"
-                : `${i + 1}.`;
-
-            text +=
-              `${medal} **${username}** — Nv.${lvl} • ${data.xp} XP • ${data.totalVoiceMinutes}min\n`;
+            username =
+              fetchedUser.username;
+          } catch {
+            // Mantém nome padrão
           }
 
-          await interaction.reply(
-            text
-          );
+          const medal =
+            i === 0
+              ? "🥇"
+              : i === 1
+              ? "🥈"
+              : i === 2
+              ? "🥉"
+              : `**${i + 1}.**`;
 
-          break;
+          text +=
+            `${medal} **${username}**\n` +
+            `> 🏆 Nv. ${lvl} • ⭐ ${data.xp} XP • 🎙️ ${formatTime(
+              data.totalVoiceMinutes
+            )}\n\n`;
         }
 
-        default:
-          break;
+        await interaction.editReply(
+          text
+        );
+
+        return;
       }
+
+      // ======================================================
+      // COMANDO DESCONHECIDO
+      // ======================================================
+
+      await interaction.editReply(
+        "❌ Comando desconhecido."
+      );
     } catch (error) {
       log(
         "error",
-        `Erro no comando ${commandName}:`,
+        `❌ Erro no comando ${commandName}:`,
         error
       );
 
-      const msg =
-        "❌ Ocorreu um erro ao processar o comando.";
+      try {
+        // Se já fizemos deferReply(),
+        // usamos editReply().
+        if (
+          interaction.deferred
+        ) {
+          await interaction.editReply(
+            "❌ Ocorreu um erro ao processar o comando."
+          );
 
-      if (
-        interaction.replied ||
-        interaction.deferred
-      ) {
-        await interaction.followUp({
-          content: msg,
-          ephemeral: true,
-        });
-      } else {
-        await interaction.reply({
-          content: msg,
-          ephemeral: true,
-        });
+          return;
+        }
+
+        // Caso ainda não tenha sido respondida
+        if (
+          !interaction.replied
+        ) {
+          await interaction.reply(
+            {
+              content:
+                "❌ Ocorreu um erro ao processar o comando.",
+              ephemeral: true,
+            }
+          );
+        }
+      } catch (replyError) {
+        log(
+          "error",
+          "❌ Não foi possível enviar mensagem de erro:",
+          replyError
+        );
       }
     }
   }
 );
 
-// ============ TRATAMENTO DE ERROS ============
+// ============================================================
+// TRATAMENTO DE ERROS DO DISCORD
+// ============================================================
 
 client.on(
   Events.Error,
   (error) => {
     log(
       "error",
-      "Erro no cliente Discord:",
+      "❌ Erro no cliente Discord:",
       error
     );
   }
 );
+
+// ============================================================
+// PROMISES NÃO TRATADAS
+// ============================================================
 
 process.on(
   "unhandledRejection",
   (reason) => {
     log(
       "error",
-      "Unhandled Rejection:",
+      "❌ Unhandled Rejection:",
       reason
     );
   }
 );
+
+// ============================================================
+// EXCEÇÕES NÃO TRATADAS
+// ============================================================
 
 process.on(
   "uncaughtException",
   (error) => {
     log(
       "error",
-      "Uncaught Exception:",
+      "❌ Uncaught Exception:",
       error
     );
 
@@ -557,7 +881,9 @@ process.on(
   }
 );
 
-// ============ PROGRESS BAR ============
+// ============================================================
+// BARRA DE PROGRESSO
+// ============================================================
 
 function createProgressBar(
   current,
@@ -565,15 +891,25 @@ function createProgressBar(
   length = 10
 ) {
   if (max <= 0) {
-    return "▰".repeat(length);
+    return "▰".repeat(
+      length
+    );
   }
 
-  const filled = Math.min(
+  const percentage =
+    Math.max(
+      0,
+      Math.min(
+        current / max,
+        1
+      )
+    );
+
+  const filled =
     Math.round(
-      (current / max) * length
-    ),
-    length
-  );
+      percentage *
+        length
+    );
 
   const empty =
     length - filled;
@@ -584,84 +920,134 @@ function createProgressBar(
   );
 }
 
-// ============ HEALTH CHECK ============
+// ============================================================
+// FORMATAR TEMPO
+// ============================================================
 
-const server = createServer(
-  (req, res) => {
-    if (
-      req.url === "/health" ||
-      req.url === "/"
-    ) {
-      const uptime =
-        process.uptime();
+function formatTime(minutes) {
+  const safeMinutes =
+    Math.max(
+      0,
+      Math.floor(minutes)
+    );
 
-      const mem =
-        process.memoryUsage();
+  const hours =
+    Math.floor(
+      safeMinutes / 60
+    );
 
-      res.writeHead(200, {
-        "Content-Type":
-          "application/json",
-      });
+  const mins =
+    safeMinutes % 60;
+
+  if (hours === 0) {
+    return `${mins}min`;
+  }
+
+  return `${hours}h ${mins}min`;
+}
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+const server =
+  createServer(
+    (req, res) => {
+      if (
+        req.url === "/health" ||
+        req.url === "/"
+      ) {
+        const uptime =
+          process.uptime();
+
+        const mem =
+          process.memoryUsage();
+
+        res.writeHead(
+          200,
+          {
+            "Content-Type":
+              "application/json",
+          }
+        );
+
+        res.end(
+          JSON.stringify({
+            status: "ok",
+
+            bot: client.isReady()
+              ? "connected"
+              : "disconnected",
+
+            uptime:
+              `${Math.floor(
+                uptime / 3600
+              )}h ${Math.floor(
+                (uptime % 3600) /
+                  60
+              )}m`,
+
+            players:
+              players.size,
+
+            memory: {
+              rss:
+                `${Math.round(
+                  mem.rss /
+                    1024 /
+                    1024
+                )} MB`,
+
+              heapUsed:
+                `${Math.round(
+                  mem.heapUsed /
+                    1024 /
+                    1024
+                )} MB`,
+            },
+
+            timestamp:
+              new Date().toISOString(),
+          })
+        );
+
+        return;
+      }
+
+      res.writeHead(
+        404,
+        {
+          "Content-Type":
+            "application/json",
+        }
+      );
 
       res.end(
         JSON.stringify({
-          status: "ok",
-          bot: client.isReady()
-            ? "connected"
-            : "disconnected",
-
-          uptime: `${Math.floor(
-            uptime / 3600
-          )}h ${Math.floor(
-            (uptime % 3600) / 60
-          )}m`,
-
-          players: players.size,
-
-          memory: {
-            rss: `${Math.round(
-              mem.rss / 1024 / 1024
-            )} MB`,
-
-            heapUsed: `${Math.round(
-              mem.heapUsed /
-                1024 /
-                1024
-            )} MB`,
-          },
-
-          timestamp:
-            new Date().toISOString(),
+          error:
+            "Not found",
         })
       );
-
-      return;
     }
+  );
 
-    res.writeHead(404, {
-      "Content-Type":
-        "application/json",
-    });
-
-    res.end(
-      JSON.stringify({
-        error: "Not found",
-      })
-    );
-  }
-);
+// ============================================================
+// INICIAR SERVIDOR
+// ============================================================
 
 server.listen(
   CONFIG.port,
   () => {
     log(
       "info",
-      `🌐 Health check rodando em http://localhost:${CONFIG.port}/health`
+      `🌐 Health check rodando na porta ${CONFIG.port}`
     );
   }
 );
 
-// ============ INICIALIZAÇÃO ============
+// ============================================================
+// LOGIN DO BOT
+// ============================================================
 
 log(
   "info",
@@ -670,19 +1056,25 @@ log(
 
 client
   .login(CONFIG.token)
-  .catch((err) => {
-    log(
-      "error",
-      "❌ Falha no login:",
-      err
-    );
+  .catch(
+    (error) => {
+      log(
+        "error",
+        "❌ Falha no login do Discord:",
+        error
+      );
 
-    process.exit(1);
-  });
+      process.exit(1);
+    }
+  );
 
-// ============ DESLIGAMENTO ============
+// ============================================================
+// DESLIGAMENTO
+// ============================================================
 
-function shutdown(signal) {
+function shutdown(
+  signal
+) {
   log(
     "info",
     `📴 Recebido ${signal}, desligando...`
@@ -693,33 +1085,48 @@ function shutdown(signal) {
     `💾 ${players.size} jogadores em memória`
   );
 
-  client.destroy();
-
-  server.close(() => {
-    log(
-      "info",
-      "✅ Desligamento completo"
-    );
-
-    process.exit(0);
-  });
-
-  setTimeout(() => {
+  try {
+    client.destroy();
+  } catch (error) {
     log(
       "error",
-      "⚠️ Forçando saída"
+      "Erro ao desligar cliente:",
+      error
     );
+  }
 
-    process.exit(1);
-  }, 10000);
+  server.close(
+    () => {
+      log(
+        "info",
+        "✅ Desligamento completo"
+      );
+
+      process.exit(0);
+    }
+  );
+
+  setTimeout(
+    () => {
+      log(
+        "error",
+        "⚠️ Forçando saída"
+      );
+
+      process.exit(1);
+    },
+    10000
+  );
 }
 
 process.on(
   "SIGTERM",
-  () => shutdown("SIGTERM")
+  () =>
+    shutdown("SIGTERM")
 );
 
 process.on(
   "SIGINT",
-  () => shutdown("SIGINT")
+  () =>
+    shutdown("SIGINT")
 );
